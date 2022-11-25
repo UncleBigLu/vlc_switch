@@ -3,5 +3,6 @@
 #include <string.h>
 
 void tcp_client(void * dest_addr);
+void tcp_server();
 
 #endif

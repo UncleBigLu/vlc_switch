@@ -19,9 +19,9 @@
 #include "ping/ping_sock.h"
 #include <arpa/inet.h>
 #include <lwip/sockets.h>
-#include "tcp_client.h"
+#include "mytcp.h"
 
-#define NODE_ID 2
+#define NODE_ID 1
 #define TOT_PING_TGT_NUM 1
 //#define ENABLE_DHCP
 #define ICMP_TEST
@@ -170,9 +170,14 @@ void app_main(void) {
         ESP_ERROR_CHECK(esp_eth_start(eth_handles[i]));
     }
 
-    struct sockaddr_in dest_addr;
-    dest_addr.sin_addr.s_addr = inet_addr("192.168.1.1");
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(23333);
-    xTaskCreate(tcp_client, "tcp_client", 4096, (void *)&dest_addr, 5, NULL);
+    if (NODE_ID == 1) {
+        xTaskCreate(tcp_server, "tcp_server", 4096, NULL, 5, NULL);
+    } else {
+        struct sockaddr_in dest_addr;
+        dest_addr.sin_addr.s_addr = inet_addr("192.168.1.1");
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_port = htons(23333);
+        xTaskCreate(tcp_client, "tcp_client", 4096, (void *)&dest_addr, 5, NULL);
+    }
+
 }
