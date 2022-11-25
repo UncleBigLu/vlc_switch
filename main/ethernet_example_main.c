@@ -21,7 +21,7 @@
 #include <lwip/sockets.h>
 #include "mytcp.h"
 
-#define NODE_ID 1
+#define NODE_ID 2
 #define TOT_PING_TGT_NUM 1
 //#define ENABLE_DHCP
 #define ICMP_TEST
@@ -68,17 +68,22 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
     ESP_LOGI(TAG, "ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
     ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
     ESP_LOGI(TAG, "~~~~~~~~~~~");
+
+    if (NODE_ID == 1) {
+        xTaskCreate(tcp_server, "tcp_server", 4096, NULL, 5, NULL);
+    } else {
+        struct sockaddr_in dest_addr;
+        dest_addr.sin_addr.s_addr = inet_addr("192.168.1.1");
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_port = htons(23333);
+        xTaskCreate(tcp_client, "tcp_client", 4096, (void *)&dest_addr, 5, NULL);
+    }
 }
 
 /** Event handler for IP_EVENT_ETH_LOST_IP **/
 static void lost_ip_event_handler(void *arg, esp_event_base_t event_base,
                                   int32_t event_id, void *event_data) {
     ESP_LOGI(TAG, "Ethernet Lost IP Address");
-    ESP_LOGI(TAG, "Stopping ping session");
-    esp_ping_handle_t *ping_session_arr = (esp_ping_handle_t *) arg;
-    for (uint8_t i = 0; i < TOT_PING_TGT_NUM; ++i) {
-        esp_ping_stop(ping_session_arr[i]);
-    }
 }
 
 
@@ -165,19 +170,11 @@ void app_main(void) {
 
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
 
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP, &lost_ip_event_handler, NULL));
+
     // Start Ethernet driver state machine
     for (int i = 0; i < eth_port_cnt; i++) {
         ESP_ERROR_CHECK(esp_eth_start(eth_handles[i]));
-    }
-
-    if (NODE_ID == 1) {
-        xTaskCreate(tcp_server, "tcp_server", 4096, NULL, 5, NULL);
-    } else {
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_addr.s_addr = inet_addr("192.168.1.1");
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_port = htons(23333);
-        xTaskCreate(tcp_client, "tcp_client", 4096, (void *)&dest_addr, 5, NULL);
     }
 
 }
