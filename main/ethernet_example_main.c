@@ -21,7 +21,7 @@
 #include <lwip/sockets.h>
 #include "mytcp.h"
 
-#define NODE_ID 2
+#define NODE_ID 1
 #define TOT_PING_TGT_NUM 1
 //#define ENABLE_DHCP
 #define ICMP_TEST

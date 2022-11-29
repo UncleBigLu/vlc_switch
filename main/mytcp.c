@@ -10,7 +10,6 @@
 #include "esp_log.h"
 
 static const char *TAG = "mytcp";
-static const char *payload = "Message from TCP client\n";
 
 void tcp_client(void * dest_addr) {
     const struct sockaddr_in _dest_addr = *(struct sockaddr_in * )dest_addr;
@@ -33,9 +32,10 @@ void tcp_client(void * dest_addr) {
             continue;
         }
         ESP_LOGI(TAG, "Successfully connected");
-
+        char addr_p[16];
+        inet_ntop(AF_INET, &_dest_addr.sin_addr, addr_p, INET_ADDRSTRLEN);
         while (1) {
-            int err = send(sock, payload, strlen(payload), 0);
+            int err = send(sock, addr_p, strlen(addr_p), 0);
             if (err < 0) {
                 ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
                 break;
@@ -100,10 +100,10 @@ void tcp_server() {
         fdmax = listen_sock;
         int newsock, recv_bytes;
         char recvbuf[1024];
-
+        char addr_str[128];
         while (1) {
             tmp_fds = read_fds;
-            ESP_LOGI(TAG, "Socket listening");
+//            ESP_LOGI(TAG, "Socket listening");
             struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
             socklen_t addr_len = sizeof(source_addr);
 
@@ -120,6 +120,11 @@ void tcp_server() {
                             ESP_LOGE(TAG, "accept error\n");
                             break;
                         } else {
+
+                            if (source_addr.ss_family == PF_INET) {
+                                inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
+                            }
+                            ESP_LOGI(TAG, "Socket accepted ip address: %s", addr_str);
                             FD_SET(newsock, &read_fds);
                             if(newsock > fdmax)
                                 fdmax = newsock;
