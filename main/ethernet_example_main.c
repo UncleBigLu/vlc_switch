@@ -20,6 +20,10 @@
 #include <arpa/inet.h>
 #include <lwip/sockets.h>
 #include "mytcp.h"
+#include "driver/ledc.h"
+
+#define LEDC_OUTPUT_IO (33)
+#define LEDC_FREQ (100000) // 100kHz
 
 #define NODE_ID 1
 #define TOT_PING_TGT_NUM 1
@@ -88,6 +92,29 @@ static void lost_ip_event_handler(void *arg, esp_event_base_t event_base,
 
 
 void app_main(void) {
+    // Config PWM
+    ledc_timer_config_t ledc_timer = {
+            .speed_mode = LEDC_HIGH_SPEED_MODE,
+            .timer_num = LEDC_TIMER_0,
+            .freq_hz = LEDC_FREQ,
+            .duty_resolution = 1,
+            .clk_cfg = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    ledc_channel_config_t ledc_channel = {
+            .speed_mode = LEDC_HIGH_SPEED_MODE,
+            .channel = LEDC_CHANNEL_0,
+            .timer_sel = LEDC_TIMER_0,
+            .intr_type = LEDC_INTR_DISABLE,
+            .gpio_num = LEDC_OUTPUT_IO,
+            .duty = 1,
+            .hpoint = 0
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    // End of PWM config. At this point there should be PWM output at selected GPIO.
+
+
     // Initialize Ethernet driver
     uint8_t eth_port_cnt = 0;
     esp_eth_handle_t *eth_handles;
