@@ -20,69 +20,27 @@
 #include <arpa/inet.h>
 #include <lwip/sockets.h>
 #include "mytcp.h"
-#include "driver/ledc.h"
+#include "myadc.h"
+#include "myledc.h"
+#include "mdns.h"
 
-#define LEDC_OUTPUT_IO (33)
-#define LEDC_FREQ (100000) // 100kHz
-
-#define NODE_ID 1
+#define NODE_ID 2
 #define TOT_PING_TGT_NUM 1
 //#define ENABLE_DHCP
 #define ICMP_TEST
+#define HOSTNAME "esp-switch1"
 
-static const char *TAG = "eth_example";
+static const char *TAG = "main";
 
-/** Event handler for Ethernet events */
-static void eth_event_handler(void *arg, esp_event_base_t event_base,
-                              int32_t event_id, void *event_data) {
-    uint8_t mac_addr[6] = {0};
-    /* we can get the ethernet driver handle from event data */
-    esp_eth_handle_t eth_handle = *(esp_eth_handle_t *) event_data;
-
-    switch (event_id) {
-        case ETHERNET_EVENT_CONNECTED:
-            esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
-            ESP_LOGI(TAG, "Ethernet Link Up");
-            ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
-                     mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
-            break;
-        case ETHERNET_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "Ethernet Link Down");
-            break;
-        case ETHERNET_EVENT_START:
-            ESP_LOGI(TAG, "Ethernet Started");
-            break;
-        case ETHERNET_EVENT_STOP:
-            ESP_LOGI(TAG, "Ethernet Stopped");
-            break;
-        default:
-            break;
-    }
-}
+static TaskHandle_t main_task_handle;
+static TaskHandle_t tcp_client_task_handle;
+static adc_continuous_handle_t adc_handle;
+static tcp_client_param_t tcp_param;
 
 /** Event handler for IP_EVENT_ETH_GOT_IP */
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
-                                 int32_t event_id, void *event_data) {
-    ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-    const esp_netif_ip_info_t *ip_info = &event->ip_info;
+                                 int32_t event_id, void *event_data);
 
-    ESP_LOGI(TAG, "Ethernet Got IP Address");
-    ESP_LOGI(TAG, "~~~~~~~~~~~");
-    ESP_LOGI(TAG, "ETHIP:" IPSTR, IP2STR(&ip_info->ip));
-    ESP_LOGI(TAG, "ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
-    ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
-    ESP_LOGI(TAG, "~~~~~~~~~~~");
-
-    if (NODE_ID == 1) {
-        xTaskCreate(tcp_server, "tcp_server", 4096, NULL, 5, NULL);
-    } else {
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_addr.s_addr = inet_addr("192.168.1.1");
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_port = htons(23333);
-        xTaskCreate(tcp_client, "tcp_client", 4096, (void *)&dest_addr, 5, NULL);
-    }
-}
 
 /** Event handler for IP_EVENT_ETH_LOST_IP **/
 static void lost_ip_event_handler(void *arg, esp_event_base_t event_base,
@@ -90,28 +48,21 @@ static void lost_ip_event_handler(void *arg, esp_event_base_t event_base,
     ESP_LOGI(TAG, "Ethernet Lost IP Address");
 }
 
+/** Callback function for adc finish one conversation **/
+static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
+{
+    BaseType_t mustYield = pdFALSE;
+    //Notify that ADC continuous driver has done enough number of conversions
+    vTaskNotifyGiveFromISR(tcp_client_task_handle, &mustYield);
+
+    return (mustYield == pdTRUE);
+}
+
+
 
 void app_main(void) {
     // Config PWM
-    ledc_timer_config_t ledc_timer = {
-            .speed_mode = LEDC_HIGH_SPEED_MODE,
-            .timer_num = LEDC_TIMER_0,
-            .freq_hz = LEDC_FREQ,
-            .duty_resolution = 1,
-            .clk_cfg = LEDC_AUTO_CLK
-    };
-    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
-
-    ledc_channel_config_t ledc_channel = {
-            .speed_mode = LEDC_HIGH_SPEED_MODE,
-            .channel = LEDC_CHANNEL_0,
-            .timer_sel = LEDC_TIMER_0,
-            .intr_type = LEDC_INTR_DISABLE,
-            .gpio_num = LEDC_OUTPUT_IO,
-            .duty = 1,
-            .hpoint = 0
-    };
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    ESP_ERROR_CHECK(init_pwm());
     // End of PWM config. At this point there should be PWM output at selected GPIO.
 
 
@@ -159,38 +110,7 @@ void app_main(void) {
         }
     }
 
-#ifndef ENABLE_DHCP
-    // Stop dhcp client
-    ESP_ERROR_CHECK(esp_netif_dhcpc_stop(eth_netif));
-    // Set static ip address
-    esp_ip4_addr_t addr, gw, netmask;
-    switch (NODE_ID) {
-        case 1:
-            esp_netif_set_ip4_addr(&addr, 192, 168, 1, 1);
-            break;
-        case 2:
-            esp_netif_set_ip4_addr(&addr, 192, 168, 1, 2);
-            break;
-        case 3:
-            esp_netif_set_ip4_addr(&addr, 192, 168, 1, 3);
-            break;
-        case 4:
-            esp_netif_set_ip4_addr(&addr, 192, 168, 1, 4);
-            break;
-        default:
-            esp_netif_set_ip4_addr(&addr, 192, 168, 1, 1);
-            break;
-    }
-    esp_netif_set_ip4_addr(&gw, 192, 168, 1, 1);
-    esp_netif_set_ip4_addr(&netmask, 255, 255, 255, 0);
-    esp_netif_ip_info_t ip_info = {
-            .ip = addr,
-            .gw = gw,
-            .netmask = netmask
-    };
-    printf("Set static ip addr");
-    ESP_ERROR_CHECK(esp_netif_set_ip_info(eth_netif, &ip_info));
-#endif
+    main_task_handle = xTaskGetCurrentTaskHandle();
 
     // Register user defined event handers
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
@@ -203,5 +123,64 @@ void app_main(void) {
     for (int i = 0; i < eth_port_cnt; i++) {
         ESP_ERROR_CHECK(esp_eth_start(eth_handles[i]));
     }
+    /** Block here until get ip address **/
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
+    /*** Initial mdns ***/
+    ESP_ERROR_CHECK(mdns_init());
+    mdns_hostname_set(HOSTNAME);
+    /** End of mdns initial **/
+    /** Initial ADC **/
+    uint8_t adc_buf[ADC_READ_LEN] = {0};
+    memset(adc_buf, 0xcc, ADC_READ_LEN);
+
+
+    // GPIO 34
+    static adc_channel_t channel = ADC_CHANNEL_6;
+    continuous_adc_init(channel, &adc_handle);
+    /** Initial TCP **/
+    tcp_param.adc_handle = adc_handle;
+    tcp_param.dest_addr = SERVER_HOSTNAME;
+    xTaskCreate(vtcp_client_task, "tcp_client_task", 4096, (void*)&tcp_param, 3, NULL);
+    tcp_client_task_handle = xTaskGetHandle("tcp_client_task");
+    if(tcp_client_task_handle == NULL) {
+        ESP_LOGE(TAG, "Obtain tcp client task failed");
+        return;
+    }
+    /** Register adc callback function **/
+    adc_continuous_evt_cbs_t cbs = {
+            .on_conv_done = s_conv_done_cb
+    };
+    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(adc_handle, &cbs, NULL));
+    ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
+    ESP_LOGI(TAG, "End of main function");
+}
+
+
+void got_ip_event_handler(void *arg, esp_event_base_t event_base,
+                          int32_t event_id, void *event_data) {
+    ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
+    const esp_netif_ip_info_t *ip_info = &event->ip_info;
+
+    ESP_LOGI(TAG, "Ethernet Got IP Address");
+    ESP_LOGI(TAG, "~~~~~~~~~~~");
+    ESP_LOGI(TAG, "ETHIP:" IPSTR, IP2STR(&ip_info->ip));
+    ESP_LOGI(TAG, "ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
+    ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
+    ESP_LOGI(TAG, "~~~~~~~~~~~");
+
+    BaseType_t mustYield = pdFALSE;
+    vTaskNotifyGiveFromISR(main_task_handle, &mustYield);
+    // Unblock and content switch back to main function
+    portYIELD_FROM_ISR(mustYield);
+
+//    if (NODE_ID == 1) {
+//        xTaskCreate(tcp_server, "tcp_server", 4096, NULL, 5, NULL);
+//    } else {
+//        struct sockaddr_in dest_addr;
+//        dest_addr.sin_addr.s_addr = inet_addr("192.168.1.1");
+//        dest_addr.sin_family = AF_INET;
+//        dest_addr.sin_port = htons(23333);
+//        xTaskCreate(tcp_client, "tcp_client", 4096, (void *) &dest_addr, 5, NULL);
+//    }
 }

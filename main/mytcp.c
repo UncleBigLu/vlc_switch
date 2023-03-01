@@ -11,36 +11,75 @@
 
 static const char *TAG = "mytcp";
 
-void tcp_client(void * dest_addr) {
-    const struct sockaddr_in _dest_addr = *(struct sockaddr_in * )dest_addr;
-    while(1) {
-        int sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) {
-            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
-            break;
-        }
-        ESP_LOGI(TAG, "Socket created");
+static int connect_to_server(void *dest_addr) {
+    // dns lookup
+    struct addrinfo hints;
+    struct addrinfo *servinfo;
 
-        int err = connect(sock, (struct sockaddr *)&_dest_addr, sizeof(struct sockaddr_in6));
-        if (err != 0) {
-            ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
-            ESP_LOGE(TAG, "Shutting down socket and restarting...");
-            shutdown(sock, 0);
-            close(sock);
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if(getaddrinfo((char*)dest_addr, SERVER_PORT, &hints, &servinfo) != 0)
+    {
+        ESP_LOGE(TAG, "Get addr info failed");
+        return -1;
+    }
+    // servinfo now points to a linkf 1 or more struct addrinfos
+    struct addrinfo *p;
+    int sockfd = -1;
+    bool is_sock_created = false;
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+        if((sockfd = socket(p->ai_family, p->ai_socktype,
+                            p->ai_protocol)) == -1) {
+            perror("client: socket");
+            continue;
+        }
+        is_sock_created = true;
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            perror("client: connect");
+            continue;
+        }
+        break;
+    }
+    freeaddrinfo(servinfo);
+    if(p == NULL) {
+        ESP_LOGE(TAG, "client: failed to connect");
+        if(is_sock_created)
+            close(sockfd);
+        return -1;
+    }
+    return sockfd;
+}
+
+void vtcp_client_task(void *pvParameters) {
+    tcp_client_param_t *param = (tcp_client_param_t*)pvParameters;
+    int sock;
+    while(1) {
+        if((sock = connect_to_server(param->dest_addr)) < 0) {
+            ESP_LOGE(TAG, "sleep 1s before retry connect...");
+            vTaskDelay(1000/portTICK_PERIOD_MS);
             continue;
         }
         ESP_LOGI(TAG, "Successfully connected");
-        char addr_p[16];
-        inet_ntop(AF_INET, &_dest_addr.sin_addr, addr_p, INET_ADDRSTRLEN);
+
+        uint8_t buf[ADC_READ_LEN] = {0};
+        memset(buf, 0xcc, ADC_READ_LEN);
+        uint32_t actual_read_num = 0;
+
         while (1) {
-            int err = send(sock, addr_p, strlen(addr_p), 0);
-            if (err < 0) {
-                ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-                break;
+            // Block here until adc data avialable
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+            ESP_ERROR_CHECK(adc_continuous_read(param->adc_handle, buf, ADC_READ_LEN, &actual_read_num, 0));
+            int actual_send = send(sock, buf, actual_read_num, 0);
+            while (actual_send < actual_read_num) {
+                if (actual_send < 0) {
+                    ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+                    break;
+                }
+                actual_send = send(sock, (buf+actual_send), actual_read_num - actual_send, 0);
             }
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
         }
         if (sock != -1) {
             ESP_LOGE(TAG, "Shutting down socket and restarting...");

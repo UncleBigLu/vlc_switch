@@ -9,9 +9,13 @@
 #include "esp_mac.h"
 #include "driver/gpio.h"
 #include "sdkconfig.h"
+
 #if CONFIG_ETH_USE_SPI_ETHERNET
+
 #include "driver/spi_master.h"
+
 #endif // CONFIG_ETH_USE_SPI_ETHERNET
+
 
 static const char *TAG = "example_eth_init";
 
@@ -41,9 +45,10 @@ typedef struct {
     int8_t phy_reset_gpio;
     uint8_t phy_addr;
     uint8_t *mac_addr;
-}spi_eth_module_config_t;
+} spi_eth_module_config_t;
 
 #if CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET
+
 /**
  * @brief Internal ESP32 Ethernet initialization
  *
@@ -53,8 +58,7 @@ typedef struct {
  *          - esp_eth_handle_t if init succeeded
  *          - NULL if init failed
  */
-static esp_eth_handle_t eth_init_internal(esp_eth_mac_t **mac_out, esp_eth_phy_t **phy_out)
-{
+static esp_eth_handle_t eth_init_internal(esp_eth_mac_t **mac_out, esp_eth_phy_t **phy_out) {
     esp_eth_handle_t ret = NULL;
 
     // Init common MAC and PHY configs to default
@@ -87,7 +91,7 @@ static esp_eth_handle_t eth_init_internal(esp_eth_mac_t **mac_out, esp_eth_phy_t
     esp_eth_handle_t eth_handle = NULL;
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
     ESP_GOTO_ON_FALSE(esp_eth_driver_install(&config, &eth_handle) == ESP_OK, NULL,
-                        err, TAG, "Ethernet driver install failed");
+                      err, TAG, "Ethernet driver install failed");
 
     if (mac_out != NULL) {
         *mac_out = mac;
@@ -96,7 +100,7 @@ static esp_eth_handle_t eth_init_internal(esp_eth_mac_t **mac_out, esp_eth_phy_t
         *phy_out = phy;
     }
     return eth_handle;
-err:
+    err:
     if (eth_handle != NULL) {
         esp_eth_driver_uninstall(eth_handle);
     }
@@ -108,6 +112,7 @@ err:
     }
     return ret;
 }
+
 #endif // CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET
 
 #if CONFIG_EXAMPLE_USE_SPI_ETHERNET
@@ -227,15 +232,14 @@ err:
 }
 #endif // CONFIG_EXAMPLE_USE_SPI_ETHERNET
 
-esp_err_t example_eth_init(esp_eth_handle_t *eth_handles_out[], uint8_t *eth_cnt_out)
-{
+esp_err_t example_eth_init(esp_eth_handle_t *eth_handles_out[], uint8_t *eth_cnt_out) {
     esp_err_t ret = ESP_OK;
     esp_eth_handle_t *eth_handles = NULL;
     uint8_t eth_cnt = 0;
 
 #if CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET || CONFIG_EXAMPLE_USE_SPI_ETHERNET
     ESP_GOTO_ON_FALSE(eth_handles_out != NULL && eth_cnt_out != NULL, ESP_ERR_INVALID_ARG,
-                        err, TAG, "invalid arguments: initialized handles array or number of interfaces");
+                      err, TAG, "invalid arguments: initialized handles array or number of interfaces");
     eth_handles = calloc(SPI_ETHERNETS_NUM + INTERNAL_ETHERNETS_NUM, sizeof(esp_eth_handle_t));
     ESP_GOTO_ON_FALSE(eth_handles != NULL, ESP_ERR_NO_MEM, err, TAG, "no memory");
 
@@ -282,8 +286,38 @@ esp_err_t example_eth_init(esp_eth_handle_t *eth_handles_out[], uint8_t *eth_cnt
 
     return ret;
 #if CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET || CONFIG_EXAMPLE_USE_SPI_ETHERNET
-err:
+    err:
     free(eth_handles);
     return ret;
 #endif
 }
+
+
+void eth_event_handler(void *arg, esp_event_base_t event_base,
+                       int32_t event_id, void *event_data) {
+    uint8_t mac_addr[6] = {0};
+    /* we can get the ethernet driver handle from event data */
+    esp_eth_handle_t eth_handle = *(esp_eth_handle_t *) event_data;
+
+    switch (event_id) {
+        case ETHERNET_EVENT_CONNECTED:
+            esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
+            ESP_LOGI(TAG, "Ethernet Link Up");
+            ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
+                     mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+            break;
+        case ETHERNET_EVENT_DISCONNECTED:
+            ESP_LOGI(TAG, "Ethernet Link Down");
+            break;
+        case ETHERNET_EVENT_START:
+            ESP_LOGI(TAG, "Ethernet Started");
+            break;
+        case ETHERNET_EVENT_STOP:
+            ESP_LOGI(TAG, "Ethernet Stopped");
+            break;
+        default:
+            break;
+    }
+}
+
+

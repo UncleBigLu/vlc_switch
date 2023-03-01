@@ -24,6 +24,11 @@ extern "C" {
  */
 esp_err_t example_eth_init(esp_eth_handle_t *eth_handles_out[], uint8_t *eth_cnt_out);
 
+// Currently just print ethernet events
+void eth_event_handler(void *arg, esp_event_base_t event_base,
+                            int32_t event_id, void *event_data);
+
+
 #ifdef __cplusplus
 }
 #endif
