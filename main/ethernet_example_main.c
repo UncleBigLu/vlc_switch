@@ -110,7 +110,6 @@ void app_main(void) {
         }
     }
 
-    main_task_handle = xTaskGetCurrentTaskHandle();
 
     // Register user defined event handers
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
@@ -123,36 +122,7 @@ void app_main(void) {
     for (int i = 0; i < eth_port_cnt; i++) {
         ESP_ERROR_CHECK(esp_eth_start(eth_handles[i]));
     }
-    /** Block here until get ip address **/
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    /*** Initial mdns ***/
-    ESP_ERROR_CHECK(mdns_init());
-    mdns_hostname_set(HOSTNAME);
-    /** End of mdns initial **/
-    /** Initial ADC **/
-    uint8_t adc_buf[ADC_READ_LEN] = {0};
-    memset(adc_buf, 0xcc, ADC_READ_LEN);
-
-
-    // GPIO 34
-    static adc_channel_t channel = ADC_CHANNEL_6;
-    continuous_adc_init(channel, &adc_handle);
-    /** Initial TCP **/
-    tcp_param.adc_handle = adc_handle;
-    tcp_param.dest_addr = SERVER_HOSTNAME;
-    xTaskCreate(vtcp_client_task, "tcp_client_task", 4096, (void*)&tcp_param, 3, NULL);
-    tcp_client_task_handle = xTaskGetHandle("tcp_client_task");
-    if(tcp_client_task_handle == NULL) {
-        ESP_LOGE(TAG, "Obtain tcp client task failed");
-        return;
-    }
-    /** Register adc callback function **/
-    adc_continuous_evt_cbs_t cbs = {
-            .on_conv_done = s_conv_done_cb
-    };
-    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(adc_handle, &cbs, NULL));
-    ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
     ESP_LOGI(TAG, "End of main function");
 }
 
@@ -169,18 +139,4 @@ void got_ip_event_handler(void *arg, esp_event_base_t event_base,
     ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
     ESP_LOGI(TAG, "~~~~~~~~~~~");
 
-    BaseType_t mustYield = pdFALSE;
-    vTaskNotifyGiveFromISR(main_task_handle, &mustYield);
-    // Unblock and content switch back to main function
-    portYIELD_FROM_ISR(mustYield);
-
-//    if (NODE_ID == 1) {
-//        xTaskCreate(tcp_server, "tcp_server", 4096, NULL, 5, NULL);
-//    } else {
-//        struct sockaddr_in dest_addr;
-//        dest_addr.sin_addr.s_addr = inet_addr("192.168.1.1");
-//        dest_addr.sin_family = AF_INET;
-//        dest_addr.sin_port = htons(23333);
-//        xTaskCreate(tcp_client, "tcp_client", 4096, (void *) &dest_addr, 5, NULL);
-//    }
 }
