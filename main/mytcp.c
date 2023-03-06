@@ -37,6 +37,8 @@ static int connect_to_server(void *dest_addr) {
         }
         is_sock_created = true;
         if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(sockfd);
+            is_sock_created = false;
             perror("client: connect");
             continue;
         }
@@ -65,20 +67,35 @@ void vtcp_client_task(void *pvParameters) {
 
         uint8_t buf[ADC_READ_LEN] = {0};
         memset(buf, 0xcc, ADC_READ_LEN);
+        uint32_t tcp_packet[(ADC_READ_LEN / SOC_ADC_DIGI_RESULT_BYTES)] = {0};
         uint32_t actual_read_num = 0;
 
         while (1) {
             // Block here until adc data avialable
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
             ESP_ERROR_CHECK(adc_continuous_read(param->adc_handle, buf, ADC_READ_LEN, &actual_read_num, 0));
-            int actual_send = send(sock, buf, actual_read_num, 0);
+            /** Extract ADC data from buf **/
+            uint32_t tmp = 0;
+            for(int i = 0; i < actual_read_num; i+=SOC_ADC_DIGI_RESULT_BYTES) {
+                adc_digi_output_data_t *p = (void*)&buf[i];
+                uint32_t chan_num = EXAMPLE_ADC_GET_CHANNEL(p);
+                uint32_t data = EXAMPLE_ADC_GET_DATA(p);
+                /* Check the channel number validation, the data is invalid if the channel num exceed the maximum channel */
+                if (chan_num < SOC_ADC_CHANNEL_NUM(EXAMPLE_ADC_UNIT)) {
+                    tcp_packet[tmp++] = htonl(data);
+                } else {
+                    // Invalid data
+                    tcp_packet[tmp++] = 0;
+                }
+            }
+
+            int actual_send = send(sock, tcp_packet, tmp*sizeof(uint32_t), 0);
             while (actual_send < actual_read_num) {
                 if (actual_send < 0) {
                     ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
                     break;
                 }
-                actual_send = send(sock, (buf+actual_send), actual_read_num - actual_send, 0);
+                actual_send = send(sock, (tcp_packet+actual_send), tmp*sizeof(uint32_t) - actual_send, 0);
             }
         }
         if (sock != -1) {

@@ -16,7 +16,6 @@
 #include "esp_log.h"
 #include "ethernet_init.h"
 #include "sdkconfig.h"
-#include "ping/ping_sock.h"
 #include <arpa/inet.h>
 #include <lwip/sockets.h>
 #include "mytcp.h"
@@ -36,6 +35,7 @@ static TaskHandle_t main_task_handle;
 static TaskHandle_t tcp_client_task_handle;
 static adc_continuous_handle_t adc_handle;
 static tcp_client_param_t tcp_param;
+
 
 /** Event handler for IP_EVENT_ETH_GOT_IP */
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
@@ -131,17 +131,13 @@ void app_main(void) {
     mdns_hostname_set(HOSTNAME);
     /** End of mdns initial **/
     /** Initial ADC **/
-    uint8_t adc_buf[ADC_READ_LEN] = {0};
-    memset(adc_buf, 0xcc, ADC_READ_LEN);
-
 
     // GPIO 34
-    static adc_channel_t channel = ADC_CHANNEL_6;
-    continuous_adc_init(channel, &adc_handle);
+    continuous_adc_init(ADC_CHANNEL_6, &adc_handle);
     /** Initial TCP **/
     tcp_param.adc_handle = adc_handle;
     tcp_param.dest_addr = SERVER_HOSTNAME;
-    xTaskCreate(vtcp_client_task, "tcp_client_task", 4096, (void*)&tcp_param, 3, NULL);
+    xTaskCreate(vtcp_client_task, "tcp_client_task", 8192, (void*)&tcp_param, 3, NULL);
     tcp_client_task_handle = xTaskGetHandle("tcp_client_task");
     if(tcp_client_task_handle == NULL) {
         ESP_LOGE(TAG, "Obtain tcp client task failed");

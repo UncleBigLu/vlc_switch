@@ -3,8 +3,8 @@
 #include <string.h>
 #include "myadc.h"
 
-#define SERVER_HOSTNAME "ublhw.local"
-#define SERVER_PORT "8888"
+#define SERVER_HOSTNAME "ublvlc.local"
+#define SERVER_PORT "23333"
 
 void vtcp_client_task(void *pvParameters);
 void tcp_server();
